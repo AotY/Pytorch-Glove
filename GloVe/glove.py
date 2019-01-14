@@ -1,14 +1,19 @@
-import torch as t
+import torch
 import numpy as np
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.autograd import Variable
+
 from torch.nn.init import xavier_normal
 
+"""
+2014:
+GloVe: Global Vectors for Word Representation
+"""
+
 class GloVe(nn.Module):
-    def __init__(self, co_oc, embed_size, x_max=100, alpha=0.75):
+    def __init__(self, co_occur, embed_size, x_max=100, alpha=0.75):
         """
-        :param co_oc: Co-occurrence ndarray with shape of [num_classes, num_classes]
+        :param co_occur: Co-occurrence ndarray with shape of [num_classes, num_classes]
         :param embed_size: embedding size
         :param x_max: An int representing cutoff of the weighting function
         :param alpha: Ant float parameter of the weighting function
@@ -17,13 +22,14 @@ class GloVe(nn.Module):
         super(GloVe, self).__init__()
 
         self.embed_size = embed_size
+
         self.x_max = x_max
         self.alpha = alpha
 
-        ''' co_oc Matrix is shifted in order to prevent having log(0) '''
-        self.co_oc = co_oc + 1.0
+        ''' co_occur Matrix is shifted in order to prevent having log(0) '''
+        self.co_occur = co_occur + 1.0
 
-        [self.num_classes, _] = self.co_oc.shape
+        [self.num_classes, _] = self.co_occur.shape
 
         self.in_embed = nn.Embedding(self.num_classes, self.embed_size)
         self.in_embed.weight = xavier_normal(self.in_embed.weight)
@@ -47,22 +53,25 @@ class GloVe(nn.Module):
 
         batch_size = len(input)
 
-        co_occurences = np.array([self.co_oc[input[i], output[i]] for i in range(batch_size)])
+        co_occurences = np.array([self.co_occur[input[i], output[i]] for i in range(batch_size)])
+        co_occurences = torch.from_numpy(co_occurences).float()
+
+        # a weighting function f(X_ij)
         weights = np.array([self._weight(var) for var in co_occurences])
+        weights = torch.from_numpy(weights).float()
 
-        co_occurences = Variable(t.from_numpy(co_occurences)).float()
-        weights = Variable(t.from_numpy(weights)).float()
-
-        input = Variable(t.from_numpy(input))
-        output = Variable(t.from_numpy(output))
-
+        input = torch.from_numpy(input)
         input_embed = self.in_embed(input)
         input_bias = self.in_bias(input)
+
+        output = torch.from_numpy(output)
         output_embed = self.out_embed(output)
         output_bias = self.out_bias(output)
 
-        return (t.pow(
-            ((input_embed * output_embed).sum(1) + input_bias + output_bias).squeeze(1) - t.log(co_occurences), 2
+        # weighted least squares regression model.
+        return (torch.pow(
+            ((input_embed * output_embed).sum(1) + input_bias + output_bias).squeeze(1) - \
+            torch.log(co_occurences), 2
         ) * weights).sum()
 
     def _weight(self, x):
@@ -70,4 +79,3 @@ class GloVe(nn.Module):
 
     def embeddings(self):
         return self.in_embed.weight.data.cpu().numpy() + self.out_embed.weight.data.cpu().numpy()
-
